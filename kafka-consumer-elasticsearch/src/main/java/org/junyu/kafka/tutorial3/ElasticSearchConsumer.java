@@ -8,6 +8,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.RequestOptions;
@@ -54,7 +56,7 @@ public class ElasticSearchConsumer {
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        properties.setProperty(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "10");
+        properties.setProperty(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "100");
 
         KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(properties);
         consumer.subscribe(Arrays.asList(topic));
@@ -94,18 +96,28 @@ public class ElasticSearchConsumer {
             while (true) {
                 ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
                 logger.info("Received {} records", records.count());
+                BulkRequest bulkRequest = new BulkRequest();
                 for (ConsumerRecord<String, String> record : records) {
-                    consumer.indexDocument(record.value());
+                    String id = consumer.extractIdFromRecord(record.value());
+                    // Idempotence: specify id to avoid inserting duplicate records.
+                    IndexRequest indexRequest = new IndexRequest("shows", "tbbt", id);
+                    indexRequest.source(record.value(), XContentType.JSON);
+                    bulkRequest.add(indexRequest);
                 }
 
-                kafkaConsumer.commitSync();
-                logger.info("Offsets have been committed");
-                Thread.sleep(200);
+                if (records.count() > 0) {
+                    BulkResponse bulkResponse = restClient.bulk(bulkRequest, RequestOptions.DEFAULT);
+                    kafkaConsumer.commitSync();
+                    logger.info("Offsets have been committed");
+                }
+
+                Thread.sleep(500);
             }
         } catch (IOException | InterruptedException e) {
             logger.info("An exception occurred when indexing.",e);
         }
 
+        logger.info("Closing rest client...");
         restClient.close();
 
     }
