@@ -53,6 +53,8 @@ public class ElasticSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        properties.setProperty(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "10");
 
         KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(properties);
         consumer.subscribe(Arrays.asList(topic));
@@ -91,10 +93,14 @@ public class ElasticSearchConsumer {
         try {
             while (true) {
                 ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
+                logger.info("Received {} records", records.count());
                 for (ConsumerRecord<String, String> record : records) {
                     consumer.indexDocument(record.value());
-                    Thread.sleep(200);
                 }
+
+                kafkaConsumer.commitSync();
+                logger.info("Offsets have been committed");
+                Thread.sleep(200);
             }
         } catch (IOException | InterruptedException e) {
             logger.info("An exception occurred when indexing.",e);
